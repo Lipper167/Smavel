@@ -118,23 +118,33 @@ def groq(prompt):
     raise last
 
 def openrouter(prompt):
-    last=None
-    for model in ['openrouter/free','meta-llama/llama-3.3-70b-instruct:free','google/gemma-3-27b-it:free']:
+    auth={'Content-Type':'application/json','Authorization':'Bearer '+env_key('OPENROUTER_API_KEY'),
+          'HTTP-Referer':os.environ.get('SITE_URL','http://127.0.0.1:8000'),'X-Title':'Smavel'}
+    candidates=['openrouter/free']
+    try:  # free models come and go, so ask OpenRouter which ones exist right now
+        data=get_json('https://openrouter.ai/api/v1/models',{})
+        ids=[m['id'] for m in data.get('data',[]) if isinstance(m,dict) and str(m.get('id','')).endswith(':free')]
+        candidates+=rank_models(ids,['llama-3.3-70b','gpt-oss-120b','qwen','deepseek','gemma','mistral','llama'],
+                                ['image','vision','audio','embed','guard','safeguard','lyria','nano'])[:5]
+    except ProviderError:
+        candidates+=['meta-llama/llama-3.3-70b-instruct:free','openai/gpt-oss-120b:free']
+    first=last=None
+    for model in dict.fromkeys(candidates):
         try:
             result=request_json('https://openrouter.ai/api/v1/chat/completions',{
                 'model':model,
                 'messages':[{'role':'system','content':SYSTEM},{'role':'user','content':prompt}],
                 'temperature':0.3,'max_tokens':3500
-            },{'Content-Type':'application/json','Authorization':'Bearer '+env_key('OPENROUTER_API_KEY'),
-               'HTTP-Referer':''+os.environ.get('SITE_URL','http://127.0.0.1:8000')+'','X-Title':'Smavel'})
+            },auth)
             if 'error' in result and 'choices' not in result:
-                raise ProviderError(str(result['error'])[:300],result['error'].get('code') if isinstance(result['error'],dict) else None)
+                err=result['error']
+                raise ProviderError(str(err)[:300],err.get('code') if isinstance(err,dict) else None)
             return model,parse_json(chat_text(result))
-        except (ProviderError,ValueError,KeyError,IndexError) as e:
+        except (ProviderError,ValueError,KeyError,IndexError,TypeError) as e:
             last=e
             if isinstance(e,ProviderError) and e.code in (401,402,403):raise
-            continue
-    raise last
+            if first is None and not (isinstance(e,ProviderError) and e.code==404):first=e   # keep the real cause, not a later "model not found"
+    raise first or last
 
 def cloudflare(prompt):
     acct=env_key('CLOUDFLARE_ACCOUNT_ID')
