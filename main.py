@@ -142,7 +142,9 @@ def openrouter(prompt):
             return model,parse_json(chat_text(result))
         except (ProviderError,ValueError,KeyError,IndexError,TypeError) as e:
             last=e
-            if isinstance(e,ProviderError) and e.code in (401,402,403):raise
+            if isinstance(e,ProviderError):
+                flagged=e.code==403 and any(w in str(e).lower() for w in ('moderation','flagged'))   # this model's content filter, not a bad key
+                if e.code in (401,402) or (e.code==403 and not flagged):raise
             if first is None and not (isinstance(e,ProviderError) and e.code==404):first=e   # keep the real cause, not a later "model not found"
     raise first or last
 
