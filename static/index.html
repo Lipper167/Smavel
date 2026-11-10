@@ -124,7 +124,6 @@ $('orange-download').addEventListener('click',()=>{
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='smavel_analyses.csv';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 });
 $('orange-clear').addEventListener('click',()=>{if(confirm('Delete all saved analyses from this browser?')){orangeSave([]);renderOrangeCount()}});
-renderOrangeCount();
 
 /* ---- Personal priorities, model disagreement, compare, print ---- */
 let lastResult=null;
@@ -132,11 +131,12 @@ function buildPriorities(d){const host=$('prio');host.replaceChildren();ORANGE_C
 function recalcPrio(){if(!lastResult)return;const ins=[...document.querySelectorAll('#prio input')];const sum=ins.reduce((a,i)=>a+Number(i.value),0);ins.forEach(i=>i.nextElementSibling.textContent=sum?Math.round(100*i.value/sum)+'%':'0%');const cs=lastResult.category_scores||{};const p=sum?Math.round(ins.reduce((a,i)=>a+(cs[i.dataset.k]||0)*i.value,0)/sum*10):0;put('prio-score','Your personal score: '+p+'/100 · '+band(p)+'  (default: '+lastResult.score+'/100)')}
 $('prio-reset').addEventListener('click',()=>{if(lastResult){buildPriorities(lastResult);recalcPrio()}});
 function markDisagreement(d){const ok=(d.providers||[]).filter(p=>p.status==='ok'&&p.category_scores);if(ok.length<2)return;const boxes=$('metrics').children;Object.keys(d.category_scores||{}).forEach((k,i)=>{const v=ok.map(p=>p.category_scores[k]);if(boxes[i]&&Math.max(...v)-Math.min(...v)>=4){const t=node('div','Models disagree: '+v.join(' vs '));t.className='agree';boxes[i].append(t)}})}
-const cmpLabel=r=>(r[1]||'?')+' · '+(r[4]||'any month')+' · '+String(r[0]||'').slice(0,10);
+function cmpLabel(r){return (r[1]||'?')+' · '+(r[4]||'any month')+' · '+String(r[0]||'').slice(0,10)}
 function refreshCompare(){const rows=orangeLoad(),card=$('compare-card');card.hidden=rows.length<2;if(rows.length<2)return;const a=$('cmp-a'),b=$('cmp-b'),keep=[a.value,b.value];[a,b].forEach(s=>s.replaceChildren());rows.forEach((r,i)=>[a,b].forEach(s=>{const o=document.createElement('option');o.value=i;o.textContent=cmpLabel(r);s.append(o)}));a.value=keep[0]!==''&&rows[keep[0]]?keep[0]:rows.length-2;b.value=keep[1]!==''&&rows[keep[1]]?keep[1]:rows.length-1;renderCompare()}
 function renderCompare(){const rows=orangeLoad(),A=rows[$('cmp-a').value],B=rows[$('cmp-b').value],host=$('cmp-body');host.replaceChildren();if(!A||!B)return;const t=document.createElement('table');t.className='ml-table';const hr=t.insertRow();['Criterion',cmpLabel(A),cmpLabel(B)].forEach(x=>{const th=document.createElement('th');th.textContent=x;hr.append(th)});
 const num=(r,i)=>r[i]===''||r[i]==null?NaN:Number(r[i]);
 [['Overall score (/100)',6]].concat(ORANGE_CATS.map((c,i)=>[c+' (/10)',8+i])).forEach(([name,ix])=>{const r=t.insertRow();r.insertCell().textContent=name;const x=num(A,ix),y=num(B,ix);[x,y].forEach((v,j)=>{const c=r.insertCell();c.textContent=Number.isFinite(v)?v:'—';if(Number.isFinite(x)&&Number.isFinite(y)&&v>(j?x:y))c.style.cssText='font-weight:800;color:#0e8159'})});host.append(t)}
 $('cmp-a').addEventListener('change',renderCompare);$('cmp-b').addEventListener('change',renderCompare);
 $('print-btn').addEventListener('click',()=>window.print());
+renderOrangeCount();
 </script></body></html>
