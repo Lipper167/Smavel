@@ -24,11 +24,11 @@ class Request(BaseModel):
 def home():return FileResponse(BASE/'static'/'index.html')
 @app.get('/health')
 def health():
-    names=[name for name,key in [('groq','GROQ_API_KEY'),('openrouter','OPENROUTER_API_KEY'),('gemini','GEMINI_API_KEY'),('cloudflare','CLOUDFLARE_API_TOKEN')] if env_key(key)]
+    names=[name for name,key in [('groq','GROQ_API_KEY'),('openrouter','OPENROUTER_API_KEY'),('cloudflare','CLOUDFLARE_API_TOKEN')] if env_key(key)]
     return {'status':'ok','api_key_configured':bool(names),'configured_providers':names}
 @app.get('/api/models')
 def models():
-    return {'configured_providers':health()['configured_providers'], 'models':{'groq':os.getenv('GROQ_MODEL','') or 'auto-detected','openrouter':'openrouter/free','gemini':os.getenv('GEMINI_MODEL','') or 'auto-detected','cloudflare':os.getenv('CLOUDFLARE_MODEL','') or 'auto-detected'},'note':'Configured models are not guaranteed available or within free quotas.'}
+    return {'configured_providers':health()['configured_providers'], 'models':{'groq':os.getenv('GROQ_MODEL','') or 'auto-detected','openrouter':'openrouter/free','cloudflare':os.getenv('CLOUDFLARE_MODEL','') or 'auto-detected'},'note':'Configured models are not guaranteed available or within free quotas.'}
 
 class ProviderError(Exception):
     def __init__(self,msg,code=None):
@@ -107,7 +107,7 @@ def groq(prompt):
             if use_json_mode:body['response_format']={'type':'json_object'}
             try:
                 result=request_json('https://api.groq.com/openai/v1/chat/completions',body,auth)
-                return parse_json(chat_text(result))
+                return model,parse_json(chat_text(result))
             except ProviderError as e:
                 last=e
                 if e.code==400 and use_json_mode:continue   # model lacks JSON mode -> retry without
@@ -129,46 +129,11 @@ def openrouter(prompt):
                'HTTP-Referer':''+os.environ.get('SITE_URL','http://127.0.0.1:8000')+'','X-Title':'Smavel'})
             if 'error' in result and 'choices' not in result:
                 raise ProviderError(str(result['error'])[:300],result['error'].get('code') if isinstance(result['error'],dict) else None)
-            return parse_json(chat_text(result))
+            return model,parse_json(chat_text(result))
         except (ProviderError,ValueError,KeyError,IndexError) as e:
             last=e
             if isinstance(e,ProviderError) and e.code in (401,402,403):raise
             continue
-    raise last
-
-def gemini(prompt):
-    hdr={'Content-Type':'application/json','x-goog-api-key':env_key('GEMINI_API_KEY')}
-    candidates=[]
-    pref=os.getenv('GEMINI_MODEL','').strip().removeprefix('models/')
-    if pref:candidates.append(pref)
-    try:  # discover models this key can use
-        data=get_json('https://generativelanguage.googleapis.com/v1beta/models?pageSize=100',hdr)
-        ids=[m['name'].removeprefix('models/') for m in data.get('models',[]) if 'generateContent' in m.get('supportedGenerationMethods',[])]
-        ids=[i for i in ids if 'flash' in i]                      # flash AND flash-lite
-        ids.sort(reverse=True)                                     # newest first
-        ids.sort(key=lambda i:'lite' not in i)                     # flash-lite first: these have free-tier quota
-        candidates+=rank_models(ids,[],['image','tts','audio','live','embed','exp','thinking','robotics','computer'])[:6]
-    except ProviderError as e:
-        if e.code in (400,401,403):raise
-        candidates+=['gemini-3.1-flash-lite','gemini-2.5-flash-lite','gemini-2.5-flash']
-    last=ProviderError('No Gemini models available',404)
-    for model in dict.fromkeys(candidates):
-        try:
-            result=request_json(f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent',{
-                'systemInstruction':{'parts':[{'text':SYSTEM}]},
-                'contents':[{'role':'user','parts':[{'text':prompt}]}],
-                'generationConfig':{'responseMimeType':'application/json','maxOutputTokens':8192,'temperature':0.3}
-            },hdr)
-            cands=result.get('candidates') or []
-            if not cands:raise ValueError('empty')
-            parts=cands[0].get('content',{}).get('parts',[])
-            return parse_json(''.join(p.get('text','') for p in parts if not p.get('thought')))
-        except ProviderError as e:
-            last=e
-            if e.code in (400,404,429):continue   # no free quota on this model -> try the next one
-            raise
-        except ValueError:
-            last=ProviderError('Bad response from '+model);continue
     raise last
 
 def cloudflare(prompt):
@@ -194,7 +159,7 @@ def cloudflare(prompt):
             body={'model':model,'messages':[{'role':'system','content':SYSTEM},{'role':'user','content':prompt}],'temperature':0.3,'max_tokens':3500,**extra}
             try:
                 result=request_json(base+'/v1/chat/completions',body,auth)
-                return parse_json(chat_text(result))
+                return model,parse_json(chat_text(result))
             except ProviderError as e:
                 last=e
                 if e.code in (400,422) and extra:continue   # unsupported option -> simpler request
@@ -204,7 +169,7 @@ def cloudflare(prompt):
                 last=ProviderError('Bad response from '+model);break
     raise last
 
-PROVIDERS=[('groq','GROQ_API_KEY',groq),('openrouter','OPENROUTER_API_KEY',openrouter),('gemini','GEMINI_API_KEY',gemini),('cloudflare','CLOUDFLARE_API_TOKEN',cloudflare)]
+PROVIDERS=[('groq','GROQ_API_KEY',groq),('openrouter','OPENROUTER_API_KEY',openrouter),('cloudflare','CLOUDFLARE_API_TOKEN',cloudflare)]
 
 def to_score(v):
     if isinstance(v,(int,float)):n=float(v)
@@ -246,10 +211,10 @@ country (string), summary (string), recommendation (string), warning (string), c
 
 async def one_provider(name,fn,prompt):
     try:
-        data=await asyncio.wait_for(asyncio.to_thread(fn,prompt),timeout=100)
+        model,data=await asyncio.wait_for(asyncio.to_thread(fn,prompt),timeout=100)
         scores,total=score_categories(data)
         print('Smavel provider completed:',name,total)
-        return {'provider':name,'status':'ok','score':total,'category_scores':scores,'data':data}
+        return {'provider':name,'status':'ok','score':total,'category_scores':scores,'model':model,'data':data}
     except Exception as exc:
         code=getattr(exc,'code',None)
         hint={401:'Invalid API key',403:'Access denied (check key/region)',402:'Credits/quota needed',404:'Model not found',429:'Rate limit / quota reached'}.get(code)
@@ -290,5 +255,5 @@ async def analyze(req:Request):
         'travel_tips':combine_list('travel_tips',8),'daily_budget_usd':safe_text(primary.get('daily_budget_usd')),
         'visa_note':safe_text(primary.get('visa_note')),'sources_to_check':combine_list('sources_to_check',8),
         'category_scores':scores,'score':total,'weights':CATEGORIES,'successful_providers':len(good),
-        'providers':[{k:v for k,v in r.items() if k in ('provider','status','score','reason')} for r in results],
+        'providers':[{k:v for k,v in r.items() if k in ('provider','status','score','reason','model')} for r in results],
         'disclaimer':'AI-generated, unverified estimates. The score averages available model opinions; it is not a factual safety certification. Verify official travel advisories, visa rules, weather and prices before booking.'}

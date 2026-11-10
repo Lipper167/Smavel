@@ -12,7 +12,6 @@
 - Groq: https://console.groq.com/keys (free developer limits; model availability can change)
 - OpenRouter: https://openrouter.ai/settings/keys (`openrouter/free` route; subject to free availability and limits)
 - Cloudflare Workers AI: https://dash.cloudflare.com (free daily allowance; needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN with Workers AI permission)
-- Gemini: https://aistudio.google.com/api-keys (free tier; the app prefers the free flash-lite models)
 
 At least one key is required. For genuine multi-AI consensus, configure 2 or 3. Providers are queried concurrently. Only successful responses are averaged; missing responses are not assigned zero. Each criterion is averaged across responding models, then the original category weights are applied. Report prose comes from the first successful provider, while highlights and tips combine unique responses.
 
@@ -25,7 +24,7 @@ AI opinions are not live verified advisories. Visa readiness checker is a docume
 ### Troubleshooting
 - The coloured chips under the form show which keys were detected. Each result card shows why a provider failed (e.g. "Invalid API key", "Rate limit / quota reached").
 - Restart uvicorn after editing `.env`. Do not put quotes or spaces around keys.
-- Models auto-fall back if one is retired (Groq, Gemini and OpenRouter).
+- Models auto-fall back if one is retired (Groq, OpenRouter and Cloudflare).
 
 ### VS Code
 1. File > Open Folder... and choose this `smavel` folder (or open `Smavel.code-workspace`).
