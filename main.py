@@ -24,11 +24,11 @@ class Request(BaseModel):
 def home():return FileResponse(BASE/'static'/'index.html')
 @app.get('/health')
 def health():
-    names=[name for name,key in [('groq','GROQ_API_KEY'),('openrouter','OPENROUTER_API_KEY'),('gemini','GEMINI_API_KEY')] if env_key(key)]
+    names=[name for name,key in [('groq','GROQ_API_KEY'),('openrouter','OPENROUTER_API_KEY'),('gemini','GEMINI_API_KEY'),('cloudflare','CLOUDFLARE_API_TOKEN')] if env_key(key)]
     return {'status':'ok','api_key_configured':bool(names),'configured_providers':names}
 @app.get('/api/models')
 def models():
-    return {'configured_providers':health()['configured_providers'], 'models':{'groq':os.getenv('GROQ_MODEL','') or 'auto-detected','openrouter':'openrouter/free','gemini':os.getenv('GEMINI_MODEL','') or 'auto-detected'},'note':'Configured models are not guaranteed available or within free quotas.'}
+    return {'configured_providers':health()['configured_providers'], 'models':{'groq':os.getenv('GROQ_MODEL','') or 'auto-detected','openrouter':'openrouter/free','gemini':os.getenv('GEMINI_MODEL','') or 'auto-detected','cloudflare':os.getenv('CLOUDFLARE_MODEL','') or 'auto-detected'},'note':'Configured models are not guaranteed available or within free quotas.'}
 
 class ProviderError(Exception):
     def __init__(self,msg,code=None):
@@ -144,12 +144,13 @@ def gemini(prompt):
     try:  # discover models this key can use
         data=get_json('https://generativelanguage.googleapis.com/v1beta/models?pageSize=100',hdr)
         ids=[m['name'].removeprefix('models/') for m in data.get('models',[]) if 'generateContent' in m.get('supportedGenerationMethods',[])]
-        ids=[i for i in ids if 'flash' in i and 'lite' not in i]
-        ids.sort(reverse=True)
-        candidates+=rank_models(ids,[],['image','tts','audio','live','embed','exp','thinking','robotics','computer'])[:5]
+        ids=[i for i in ids if 'flash' in i]                      # flash AND flash-lite
+        ids.sort(reverse=True)                                     # newest first
+        ids.sort(key=lambda i:'lite' not in i)                     # flash-lite first: these have free-tier quota
+        candidates+=rank_models(ids,[],['image','tts','audio','live','embed','exp','thinking','robotics','computer'])[:6]
     except ProviderError as e:
         if e.code in (400,401,403):raise
-        candidates+=['gemini-2.5-flash','gemini-2.0-flash']
+        candidates+=['gemini-3.1-flash-lite','gemini-2.5-flash-lite','gemini-2.5-flash']
     last=ProviderError('No Gemini models available',404)
     for model in dict.fromkeys(candidates):
         try:
@@ -164,13 +165,46 @@ def gemini(prompt):
             return parse_json(''.join(p.get('text','') for p in parts if not p.get('thought')))
         except ProviderError as e:
             last=e
-            if e.code in (400,404):continue
+            if e.code in (400,404,429):continue   # no free quota on this model -> try the next one
             raise
         except ValueError:
             last=ProviderError('Bad response from '+model);continue
     raise last
 
-PROVIDERS=[('groq','GROQ_API_KEY',groq),('openrouter','OPENROUTER_API_KEY',openrouter),('gemini','GEMINI_API_KEY',gemini)]
+def cloudflare(prompt):
+    acct=env_key('CLOUDFLARE_ACCOUNT_ID')
+    if not acct:raise ProviderError('Set CLOUDFLARE_ACCOUNT_ID')
+    base=f'https://api.cloudflare.com/client/v4/accounts/{acct}/ai'
+    auth={'Content-Type':'application/json','Authorization':'Bearer '+env_key('CLOUDFLARE_API_TOKEN')}
+    candidates=[]
+    pref=os.getenv('CLOUDFLARE_MODEL','').strip()
+    if pref:candidates.append(pref)
+    try:  # ask Cloudflare which text models exist right now (names change over time)
+        data=get_json(base+'/models/search?task=Text%20Generation&per_page=100',auth)
+        ids=[m['name'] for m in data.get('result',[]) if isinstance(m,dict) and str(m.get('name','')).startswith('@cf/')]
+        candidates+=rank_models(ids,['llama-3.3-70b-instruct-fp8-fast','gpt-oss-120b','llama-4-scout','llama-3.1-8b-instruct','qwen','gemma','mistral'],
+                                ['guard','embed','coder','math','whisper','tts','vision','awq','int8','sea-lion','tinyllama','phi-2','zephyr','llama-2','7b'])[:6]
+    except ProviderError as e:
+        if e.code in (401,403):raise
+        candidates+=['@cf/meta/llama-3.3-70b-instruct-fp8-fast','@cf/openai/gpt-oss-120b','@cf/meta/llama-3.1-8b-instruct']
+    last=ProviderError('No Cloudflare models available',404)
+    variants=[{'response_format':{'type':'json_object'}},{}]   # retry without JSON mode if the model rejects it
+    for model in dict.fromkeys(candidates):
+        for extra in variants:
+            body={'model':model,'messages':[{'role':'system','content':SYSTEM},{'role':'user','content':prompt}],'temperature':0.3,'max_tokens':3500,**extra}
+            try:
+                result=request_json(base+'/v1/chat/completions',body,auth)
+                return parse_json(chat_text(result))
+            except ProviderError as e:
+                last=e
+                if e.code in (400,422) and extra:continue   # unsupported option -> simpler request
+                if e.code in (400,404,422):break             # bad/retired model -> next model
+                raise                                        # 401/403/429 (daily allowance used up) -> stop
+            except (ValueError,KeyError,IndexError,AttributeError):
+                last=ProviderError('Bad response from '+model);break
+    raise last
+
+PROVIDERS=[('groq','GROQ_API_KEY',groq),('openrouter','OPENROUTER_API_KEY',openrouter),('gemini','GEMINI_API_KEY',gemini),('cloudflare','CLOUDFLARE_API_TOKEN',cloudflare)]
 
 def to_score(v):
     if isinstance(v,(int,float)):n=float(v)

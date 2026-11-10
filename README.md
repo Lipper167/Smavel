@@ -11,7 +11,8 @@
 ### Providers
 - Groq: https://console.groq.com/keys (free developer limits; model availability can change)
 - OpenRouter: https://openrouter.ai/settings/keys (`openrouter/free` route; subject to free availability and limits)
-- Gemini: https://aistudio.google.com/api-keys (free tier may be busy or restricted)
+- Cloudflare Workers AI: https://dash.cloudflare.com (free daily allowance; needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN with Workers AI permission)
+- Gemini: https://aistudio.google.com/api-keys (free tier; the app prefers the free flash-lite models)
 
 At least one key is required. For genuine multi-AI consensus, configure 2 or 3. Providers are queried concurrently. Only successful responses are averaged; missing responses are not assigned zero. Each criterion is averaged across responding models, then the original category weights are applied. Report prose comes from the first successful provider, while highlights and tips combine unique responses.
 
