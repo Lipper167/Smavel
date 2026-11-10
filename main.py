@@ -267,5 +267,5 @@ async def analyze(req:Request):
         'travel_tips':combine_list('travel_tips',8),'daily_budget_usd':safe_text(primary.get('daily_budget_usd')),
         'visa_note':safe_text(primary.get('visa_note')),'sources_to_check':combine_list('sources_to_check',8),
         'category_scores':scores,'score':total,'weights':CATEGORIES,'successful_providers':len(good),
-        'providers':[{k:v for k,v in r.items() if k in ('provider','status','score','reason','model')} for r in results],
+        'providers':[{k:v for k,v in r.items() if k in ('provider','status','score','reason','model','category_scores')} for r in results],
         'disclaimer':'AI-generated, unverified estimates. The score averages available model opinions; it is not a factual safety certification. Verify official travel advisories, visa rules, weather and prices before booking.'}
